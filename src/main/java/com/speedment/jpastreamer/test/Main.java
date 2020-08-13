@@ -1,50 +1,96 @@
 package com.speedment.jpastreamer.test;
 
-import com.speedment.jpastreamer.application.JpaStreamer;
-import com.speedment.jpastreamer.test.model.Film;
-import com.speedment.jpastreamer.test.model.Film$;
+import com.speedment.jpastreamer.application.JPAStreamer;
+import com.speedment.jpastreamer.test.model.*;
+
+import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.persistence.Persistence;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import static java.util.stream.Collectors.*;
 
 public class Main {
 
+    final static JPAStreamer jpaStreamer = JPAStreamer.createJPAStreamerBuilder("sakila")
+            .build();
+
     public static void main(String[] args) {
 
-        // Rework to JpaStreamer.create...
+        /* ONE-TO-MANY EXAMPLE */
+        Map<Language, Set<Film>> languageFilmMap = jpaStreamer.stream(Language.class)
+                .limit(10)
+                .collect(
+                        toMap(Function.identity(),
+                                Language::getFilms)
+                );
 
-        //JpaStreamer.create(String persistenceName)
-        //JpaStreamer.create()
+        languageFilmMap
+                .forEach(
+                        (k, v) -> System.out.format("%s: %s\n", k.getName(),
+                                v.stream().map(f -> f.getTitle()).collect(toList())));
 
-        JpaStreamer jpaStreamer = JpaStreamer.createJpaStreamerBuilder("sakila")
-                .build();
+        /* MANY-TO-ONE EXAMPLE */
+        Map<Film, Language> languageMap = jpaStreamer.stream(Film.class)
+                .filter(Film$.rating.equal("PG-13")).limit(5)
+                .collect(
+                        Collectors.toMap(Function.identity(),
+                                Film::getLanguage
+                        )
+                );
 
-        jpaStreamer.stream(Film.class)
-                .forEach(System.out::println);
+        languageMap
+                .forEach(
+                        (k, v) -> System.out.format("%s: %s\n", k.getTitle(), v.getName()));
 
+        /* MANY-TO-MANY EXAMPLE */
+        Map<Actor, List<Film>> filmography = jpaStreamer.stream(Actor.class)
+                .collect(
+                        Collectors.toMap(Function.identity(),
+                                Actor::getFilms
+                        )
+                );
 
-        jpaStreamer.stream(Film.class)
-                .filter(Film$.length.between(100, 120))
-                .forEach(System.out::println);
+        filmography
+                .forEach(
+                        (k, v) -> System.out.format("%s: %s\n", k.getFirstName() + " " + k.getLastName(),
+                                v));
 
-        jpaStreamer.stream(Film.class)
-                // Composing filters with "and"/"or"
-                .filter(Film$.rating.equal("G").or(Film$.length.greaterOrEqual(140)))
-                .forEach(System.out::println);
-
-
-        jpaStreamer.stream(Film.class)
-                .filter(Film$.rating.equal("G"))
-                .sorted(Film$.length.reversed().thenComparing(Film$.title.comparator()))
-                .skip(10)
-                .limit(5)
-                .forEach(System.out::println);
-
-        long count = jpaStreamer.stream(Film.class)
-                .filter(Film$.rating.equal("G"))
-                .count();
-
-        System.out.println("There are "+count+" films with rating G");
-
-        jpaStreamer.close();
-
+        /* PIVOT EXAMPLE */
+        Map<Actor, Map<String, Long>> pivot = jpaStreamer.stream(Actor.class)
+                .collect(
+                        groupingBy(Function.identity(),
+                                Collectors.flatMapping(a -> a.getFilms().stream(),
+                                        groupingBy(Film::getRating, counting())
+                                )
+                        )
+                );
 
     }
+
+    /* TRANSACTIONS EXAMPLE */
+    private static void updateRentalRates() {
+
+        EntityManagerFactory emf = Persistence.createEntityManagerFactory("sakila");
+        EntityManager em = emf.createEntityManager();
+
+        try {
+            em.getTransaction().begin();
+            jpaStreamer.stream(Film.class)
+                    .filter(Film$.rating.equal("R"))
+                    .forEach(f ->
+                        f.setRentalRate(f.getRentalRate() + 1)
+                    );
+            em.getTransaction().commit();
+        } catch(Exception e) {
+            em.getTransaction().rollback();
+        }
+
+    }
+
+
 }
